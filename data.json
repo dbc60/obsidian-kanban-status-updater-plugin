@@ -1,5 +1,5 @@
 {
-  "statusPropertyName": "kanban-status",
+  "statusPropertyName": "status",
   "showNotifications": false,
   "debugMode": false
 }

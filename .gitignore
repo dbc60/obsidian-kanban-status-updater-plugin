@@ -1,0 +1,60 @@
+# Dependency directories
+node_modules/
+
+# NPM/Yarn logs
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+.pnpm-debug.log
+
+# Build process
+.rollup.cache/
+.hot/
+
+# Editor directories and files
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Local development files
+test-vault/
+.obsidian/
+
+# Temporary files
+*.tmp
+*.bak
+.cache/
+.temp/
+tmp/
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs
+*.log
+
+# Optional: Uncomment if you don't want to include compiled JS in version control
+# main.js
+# *.js.map
+
+# Keep manifest.json, styles.css, and README.md in version control

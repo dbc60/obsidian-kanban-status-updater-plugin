@@ -2,6 +2,8 @@
 
 This plugin automatically updates a property in a note's frontmatter when a card containing a link to that note is moved to a different column on a Kanban board.
 
+![demo](demo.gif)
+
 ## Features
 
 - Automatically updates a YAML frontmatter property (default: "status") when a card is moved on a Kanban board
