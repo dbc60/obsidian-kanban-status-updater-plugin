@@ -1,13 +1,10 @@
-import { 
-  App, 
-  Editor, 
-  MarkdownView, 
-  Notice, 
-  Plugin, 
+import {
+  App,
+  Notice,
+  parseYaml,
+  Plugin,
   PluginSettingTab,
   Setting,
-  TFile,
-  parseYaml,
   stringifyYaml,
   WorkspaceLeaf
 } from 'obsidian';
@@ -20,7 +17,7 @@ interface KanbanStatusUpdaterSettings {
 
 const DEFAULT_SETTINGS: KanbanStatusUpdaterSettings = {
   statusPropertyName: 'status',
-  showNotifications: true,
+  showNotifications: false,
   debugMode: false  // Default to false for better performance
 }
 
@@ -198,44 +195,91 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
   }
   
   handleMutations(mutations: MutationRecord[]) {
-      if (!this.activeKanbanBoard) return;
-      
-      try {
+    if (!this.activeKanbanBoard) return;
+    
+    try {
         const max_mutations = 10;
-          // Only process a sample of mutations for performance
-          const mutationsToProcess = mutations.length > max_mutations ? 
-              mutations.slice(0, max_mutations) : mutations;
-              
-          this.log(`Got ${mutationsToProcess.length} mutations of ${mutations.length}`);
-          
-          // Look for Kanban items in mutation
-          let i = 0;
-          for (const mutation of mutationsToProcess) {
-              this.log(`Mutation #${++i} - Type: ${mutation.type}`);
-              if (mutation.type === 'childList') {
-                  // Check added nodes for Kanban items
-                  for (const node of Array.from(mutation.addedNodes)) {
-                      if (node instanceof HTMLElement) {
-                          this.processElement(node);
-                      } else {
-                          this.log('Added node is not an HTMLElement but a ' + typeof node);
-                          const htmlElement = node as HTMLElement;
-                          this.log('Casted to HTMLElement: ' + htmlElement);
-                          this.processElement(htmlElement);
-                      }
-                  }
-              } else {
-                  this.log('Ignoring mutation type: ' + mutation.type);
-              }
-          }
-      } catch (error) {
-          this.log(`Error in handleMutations: ${error.message}`);
-      }
+        // Only process a sample of mutations for performance
+        const mutationsToProcess = mutations.length > max_mutations ? 
+            mutations.slice(0, max_mutations) : mutations;
+            
+        this.log(`Got ${mutationsToProcess.length} mutations of ${mutations.length}`);
+        
+        // Look for Kanban items in mutation
+        let i = 0;
+        for (const mutation of mutationsToProcess) {
+            this.log(`Mutation #${++i} - Type: ${mutation.type}`);
+            if (mutation.type === 'childList') {
+                // Check added nodes for Kanban items
+                for (const node of Array.from(mutation.addedNodes)) {
+                    try {
+                        // Check if node is any kind of Element (HTML or SVG)
+                        if (node instanceof Element) {
+                            this.log(`Processing Element of type: ${node.tagName}`);
+                            
+                            // Handle the node according to its type
+                            if (node instanceof HTMLElement || node instanceof HTMLDivElement) {
+                                // Direct processing for HTML elements
+                                this.log(`Found HTML element of type ${node.className}`);
+                                this.processElement(node);
+                            } else if (node instanceof SVGElement) {
+                                // For SVG elements, look for parent HTML element
+                                const parentElement = node.closest('.kanban-plugin__item');
+                                if (parentElement) {
+                                    this.log('Found Kanban item parent of SVG element');
+                                    this.processElement(parentElement as HTMLElement);
+                                } else {
+                                    // Look for any kanban items in the document that might have changed
+                                    // This is for cases where the SVG update is related to a card movement
+                                    const items = this.activeKanbanBoard.querySelectorAll('.kanban-plugin__item');
+                                    if (items.length > 0) {
+                                        // Process only the most recently modified item
+                                        const recentItems = Array.from(items).slice(-1);
+                                        for (const item of recentItems) {
+                                            this.log('Processing recent item after SVG change');
+                                            this.processElement(item as HTMLElement);
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (node.nodeType === Node.TEXT_NODE) {
+                            // For text nodes, check the parent element
+                            const parentElement = node.parentElement;
+                            if (parentElement && (
+                                parentElement.classList.contains('kanban-plugin__item-title') ||
+                                parentElement.closest('.kanban-plugin__item')
+                            )) {
+                                this.log('Found text change in Kanban item');
+                                const itemElement = parentElement.closest('.kanban-plugin__item');
+                                if (itemElement) {
+                                    this.processElement(itemElement as HTMLElement);
+                                }
+                            }
+                        } else {
+                            this.log(`Skipping node type: ${node.nodeType}`);
+                        }
+                    } catch (nodeError) {
+                        this.log(`Error processing node: ${nodeError.message}`);
+                        // Continue with next node even if this one fails
+                    }
+                }
+            } else {
+                this.log('Ignoring mutation type: ' + mutation.type);
+            }
+        }
+    } catch (error) {
+        this.log(`Error in handleMutations: ${error.message}`);
+    }
   }
   
   onDragEnd(event: DragEvent) {
       // Only process if we have an active Kanban board
-      if (!this.activeKanbanBoard || this.isProcessing) return;
+      if (!this.activeKanbanBoard || this.isProcessing) {
+        this.log('Drag end detected but no active Kanban board or already processing');
+        this.log('activeKanbanBoard: ' + (this.activeKanbanBoard ? 'Yes' : 'No'));
+        this.log('isProcessing: ' + (this.isProcessing ? 'Yes' : 'No'));
+        return;
+      }
       
       try {
           this.log('Drag end detected');
@@ -266,6 +310,7 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
           }
           
           // Use different strategies to find the Kanban item
+          this.log("👀 Looking for Kanban item element");
           
           // Check if element is a Kanban item or contains one
           const kanbanItem = element.classList.contains('kanban-plugin__item') 
@@ -273,12 +318,16 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
               : element.querySelector('.kanban-plugin__item');
               
           if (kanbanItem) {
+              this.log(`✅ Found Kanban item: ${kanbanItem}`);
+              this.log('classList of kanbanItem: ' + kanbanItem.classList);
               this.processKanbanItem(kanbanItem as HTMLElement);
               return;
           }
+          this.log('Not a Kanban item, checking for parent');
           
           // If element is inside a Kanban item, find the parent
           const parentItem = element.closest('.kanban-plugin__item') as HTMLElement;
+          this.log(`Parent item: ${parentItem ? parentItem : 'Not found'}`);
           if (parentItem) {
               this.processKanbanItem(parentItem);
               return;
@@ -288,27 +337,41 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
       }
   }
   
-  processKanbanItem(itemElement: HTMLElement) {
+  processKanbanItem(itemElement: HTMLElement) { // itemElement will be of class `kanban-plugin__item`
       try {
-          // Find the lane (column) this item is in
-          const lane = itemElement.closest('.kanban-plugin__lane');
-          if (!lane) return;
+
+          // TODO: Select the title
+          const internalLink = itemElement.querySelector('.kanban-plugin__item-title .kanban-plugin__item-markdown a.internal-link');
           
-          // Get column name from the lane header
-          const laneHeader = lane.querySelector('.kanban-plugin__lane-header-title');
-          if (!laneHeader) return;
-          
-          const columnName = laneHeader.textContent.trim();
-          
-          // Find the link inside the item
-          const internalLink = itemElement.querySelector('a.internal-link');
-          if (!internalLink) return;
+          if (!internalLink) {
+            this.log('🚫 No internal link found in item');
+            return;
+          }
+          this.log(`Found internal link: ${internalLink.textContent}`);
           
           // Get the link path from data-href or href attribute
           const linkPath = internalLink.getAttribute('data-href') || 
                           internalLink.getAttribute('href');
                           
           if (!linkPath) return;
+          this.log(`🔗 Link path: ${linkPath}`);
+
+          // Find the lane (column) this item is in
+          const lane = itemElement.closest('.kanban-plugin__lane');
+          if (!lane) { 
+            this.log('🚫 No lane found for item');
+            return; 
+          }
+          
+          // Get column name from the lane header
+          const laneHeader = lane.querySelector('.kanban-plugin__lane-header-wrapper .kanban-plugin__lane-title');
+          if (!laneHeader) { 
+            this.log('🚫 No laneHeader found for item');
+            return; 
+          }
+          
+          const columnName = laneHeader.textContent.trim();
+          this.log(`✅ Got lane name: ${columnName}`);
           
           this.log(`Processing card with link to "${linkPath}" in column "${columnName}"`);
           

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
   "description": "Automatically updates a 'status' property in a note when its card is moved on a Kanban board",
-  "author": "Ankit K",
-  "authorUrl": "https://github.com/yourusername",
+  "author": "Ankit Kapur",
+  "authorUrl": "https://github.com/ankit-kapur",
   "isDesktopOnly": false
 }
