@@ -33,7 +33,7 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
   private processingMutation: boolean = false;
   private pendingCardUpdates: Map<string, {card: HTMLElement, column: HTMLElement}> = new Map();
   private mutationDebounceTimeout: NodeJS.Timeout = null;
-  debugLog: (message: string) => void;
+  debugLog: any;
   statusBarItem: any;
 
   async onload() {
@@ -98,7 +98,7 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
       
       this.app.workspace.onLayoutReady(() => {
           // Find Kanban board containers to observe more specifically
-          const kanbanBoards = document.querySelectorAll('.kanban-plugin__board');
+          const kanbanBoards = document.querySelectorAll('.kanban-plugin__board, .kanban-board');
           
           if (kanbanBoards && kanbanBoards.length > 0) {
               // Observe each Kanban board specifically rather than the entire document
@@ -111,23 +111,36 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
               });
               this.debugLog(`MutationObserver attached to ${kanbanBoards.length} Kanban boards`);
           } else {
-              // Fallback to a more targeted observation if no boards found
-              const workspace = document.querySelector('.workspace');
-              if (workspace) {
-                  observer.observe(workspace, {
-                      childList: true,
-                      subtree: true,
-                      attributes: false
+              // Look for elements with kanban-plugin__ in their class names
+              const kanbanElements = document.querySelectorAll('[class*="kanban-plugin__"]');
+              if (kanbanElements && kanbanElements.length > 0) {
+                  kanbanElements.forEach(el => {
+                      observer.observe(el, {
+                          childList: true,
+                          subtree: true,
+                          attributes: false
+                      });
                   });
-                  this.debugLog('MutationObserver attached to workspace (no Kanban boards found yet)');
+                  this.debugLog(`MutationObserver attached to ${kanbanElements.length} Kanban elements`);
               } else {
-                  // Last resort - observe body with more restrictions
-                  observer.observe(document.body, { 
-                      childList: true, 
-                      subtree: true,
-                      attributes: false
-                  });
-                  this.debugLog('MutationObserver attached to document body (fallback mode)');
+                  // Fallback to a more targeted observation if no boards found
+                  const workspace = document.querySelector('.workspace');
+                  if (workspace) {
+                      observer.observe(workspace, {
+                          childList: true,
+                          subtree: true,
+                          attributes: false
+                      });
+                      this.debugLog('MutationObserver attached to workspace (no Kanban boards found yet)');
+                  } else {
+                      // Last resort - observe body with more restrictions
+                      observer.observe(document.body, { 
+                          childList: true, 
+                          subtree: true,
+                          attributes: false
+                      });
+                      this.debugLog('MutationObserver attached to document body (fallback mode)');
+                  }
               }
           }
           
@@ -193,34 +206,46 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
   }
 
   handleDragEnd(evt: DragEvent) {
-      // Check if this was a Kanban card being dragged
+      // Check if this was a Kanban-related element being dragged
       const target = evt.target as HTMLElement;
       if (!target) {
           this.debugLog('Drag event had no target');
           return;
       }
       
-      this.debugLog(`Drag event detected on element: ${target.tagName}${target.className ? ' with class ' + target.className : ''}`);
+      this.debugLog(`Drag event detected on element: ${target.tagName} with class ${target.className}`);
       
-      const kanbanCard = target.closest('.kanban-card');
-      if (!kanbanCard) {
-          this.debugLog('Element is not or does not contain a Kanban card');
+      // Determine if this is a Kanban-related drag
+      const isKanbanElement = 
+          target.className.includes('kanban-plugin__') ||
+          target.className.includes('markdown-preview-view') ||
+          !!target.closest('[class*="kanban-plugin__"]');
+          
+      if (!isKanbanElement) {
+          this.debugLog('Not a Kanban-related drag event');
           return;
       }
       
-      this.debugLog('Kanban card found in drag event');
+      this.debugLog('Kanban-related drag detected');
       
-      // Get the column the card was dropped in
-      const column = kanbanCard.closest('.kanban-column');
+      // Get the item that was dragged (could be a task item or list item)
+      const draggedItem = target.closest('li') || target.closest('.task-list-item') || target;
+      if (!draggedItem) {
+          this.debugLog('Could not identify the dragged item');
+          return;
+      }
+      
+      // Find what column it was dropped into
+      const column = this.findKanbanColumn(draggedItem as HTMLElement);
       if (!column) {
-          this.debugLog('Could not find parent Kanban column');
+          this.debugLog('Could not determine destination column');
           return;
       }
       
-      this.debugLog('Card was moved to a column, processing movement');
+      this.debugLog('Found column for dragged item, processing movement');
       
       // Process the card movement
-      this.processCardMovement(kanbanCard as HTMLElement, column as HTMLElement);
+      this.processCardMovement(draggedItem as HTMLElement, column as HTMLElement);
   }
 
   handleDOMMutations(mutations: MutationRecord[]) {
@@ -237,7 +262,7 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
       
       // Set flag to prevent recursive processing
       this.processingMutation = true;
-
+      
       try {
           // Clear the pending updates map
           this.pendingCardUpdates.clear();
@@ -247,54 +272,62 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
               if (mutation.type === 'childList') {
                   // Only log if there are actually Kanban-related nodes
                   let foundKanbanElements = false;
-
-                  this.debugLog(`mutation.type === 'childList'`);
                   
                   for (const node of Array.from(mutation.addedNodes)) {
                       if (node instanceof HTMLElement) {
-                          // Check if this is or contains Kanban card elements
-                          const isKanbanElement = 
-                              node.classList.contains('kanban-card') ||
-                              node.classList.contains('kanban-column') ||
-                              node.querySelector('.kanban-card') !== null;
-
-
-                          this.debugLog(`node.classList: ${node.classList}`);
-                          this.debugLog(`node.tagName: ${node.tagName}`);
-                          this.debugLog(`node.className: ${node.className}`);
+                          // Log all element classes during debug to help identify patterns
+                          if (this.settings.debugMode && node.className) {
+                              this.debugLog(`Element classes: ${node.className}`);
+                          }
                           
-                          this.debugLog(`isKanbanElement -------------------- ${isKanbanElement}`);
-
+                          // Check if this is or contains Kanban-related elements
+                          const isKanbanElement = 
+                              node.className.includes('kanban-plugin__') ||
+                              node.className.includes('markdown-preview-view') ||
+                              !!node.querySelector('[class*="kanban-plugin__"]') ||
+                              !!node.closest('[class*="kanban-plugin__"]');
+                              
                           if (isKanbanElement) {
                               foundKanbanElements = true;
                               
                               // Only now log details
-                              this.debugLog(`Relevant mutation: ${node.tagName}${node.className ? ' with class ' + node.className : ''}`);
+                              this.debugLog(`Relevant mutation: ${node.tagName} with class ${node.className}`);
                               
-                              // Look for Kanban cards
-                              const kanbanCards = node.classList.contains('kanban-card') 
-                                  ? [node] 
-                                  : Array.from(node.querySelectorAll('.kanban-card'));
+                              // Try to identify potential card elements in several ways
+                              // Kanban cards might be list items in the markdown
+                              const listItems = node.querySelectorAll('li');
+                              const taskListItems = node.querySelectorAll('.task-list-item');
+                              const dataItems = node.querySelectorAll('[data-line]');  // Items with data-line attribute
                               
-                              for (const card of kanbanCards) {
-                                  const column = card.closest('.kanban-column');
-                                  if (column) {
-                                      // Create a unique ID for this card to avoid duplicates
-                                      const cardText = card.textContent?.trim();
-                                      const cardId = cardText?.substring(0, 50) || card.id || 'unknown';
+                              const potentialCards = [
+                                  ...Array.from(listItems),
+                                  ...Array.from(taskListItems),
+                                  ...Array.from(dataItems)
+                              ];
+                              
+                              if (potentialCards.length > 0) {
+                                  this.debugLog(`Found ${potentialCards.length} potential card elements`);
+                                  
+                                  for (const card of potentialCards) {
+                                      // Try to find the column - might be a parent element with a heading
+                                      const column = this.findKanbanColumn(card as HTMLElement);
                                       
-                                      this.debugLog(`Added card to pendingCardUpdates: ${cardText}`);
-                                      this.debugLog(`Column: ${column.textContent}`);
-
-                                      // Add to pending updates map, this way if same card appears in multiple
-                                      // mutations, we only process the last one
-                                      this.pendingCardUpdates.set(cardId, {
-                                          card: card as HTMLElement, 
-                                          column: column as HTMLElement
-                                      });
-                                      
-                                      this.debugLog(`Queued card update: ${cardId.substring(0, 20)}...`);
+                                      if (column) {
+                                          // Create a unique ID for this card
+                                          const cardText = card.textContent?.trim();
+                                          const cardId = cardText?.substring(0, 50) || card.id || 'unknown';
+                                          
+                                          this.debugLog(`Found card: "${cardText?.substring(0, 30)}..." in column`);
+                                          
+                                          // Add to pending updates
+                                          this.pendingCardUpdates.set(cardId, {
+                                              card: card as HTMLElement, 
+                                              column: column
+                                          });
+                                      }
                                   }
+                              } else {
+                                  this.debugLog('No potential cards found in Kanban element');
                               }
                           }
                       }
@@ -331,44 +364,114 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
           }, 1000); // Ensure a minimum cool-down period between mutation processing
       }
   }
+  
+  // New helper method to find the Kanban column for a card
+  findKanbanColumn(card: HTMLElement): HTMLElement | null {
+      // Try several strategies to find the column
+      
+      // 1. Look for heading elements that might be column headers
+      let current = card;
+      while (current && current.tagName !== 'BODY') {
+          // Check if this element has a heading as a previous sibling or child
+          const heading = current.querySelector('h1, h2, h3, h4, h5, h6') || 
+                         this.findPreviousHeading(current);
+          
+          if (heading) {
+              this.debugLog(`Found column heading: "${heading.textContent}"`);
+              return current;
+          }
+          
+          current = current.parentElement;
+      }
+      
+      // 2. Try to find column based on structure - look for container divs
+      const containerDiv = card.closest('.markdown-preview-section');
+      if (containerDiv) {
+          return containerDiv as HTMLElement;
+      }
+      
+      // 3. If we really can't find anything, use the parent of the card
+      return card.parentElement;
+  }
+  
+  // Helper to find the previous heading element
+  findPreviousHeading(element: HTMLElement): HTMLElement | null {
+      let previous = element.previousElementSibling;
+      while (previous) {
+          if (previous.matches('h1, h2, h3, h4, h5, h6')) {
+              return previous as HTMLElement;
+          }
+          
+          // Also check children of previous siblings (nested headings)
+          const nestedHeading = previous.querySelector('h1, h2, h3, h4, h5, h6');
+          if (nestedHeading) {
+              return nestedHeading as HTMLElement;
+          }
+          
+          previous = previous.previousElementSibling;
+      }
+      return null;
+  }
 
   processCardMovement(card: HTMLElement, column: HTMLElement) {
-      // Get the column name (new status)
-      const headerElement = column.querySelector('.kanban-column-header');
-      if (!headerElement) {
+      // Try to determine the column name (new status) from heading elements
+      let columnHeader = column.querySelector('h1, h2, h3, h4, h5, h6');
+      if (!columnHeader) {
+          // If no heading found in the column, try to find it above
+          columnHeader = this.findPreviousHeading(column);
+      }
+      
+      if (!columnHeader) {
           this.debugLog('Could not find column header element');
           return;
       }
       
-      const newStatus = headerElement.textContent.trim();
+      const newStatus = columnHeader.textContent.trim();
       this.debugLog(`Column name (new status): "${newStatus}"`);
       
-      // Get the card content and look for the first link
-      const cardContentElement = card.querySelector('.kanban-card-text, .kanban-card-content');
-      if (!cardContentElement) {
-          this.debugLog('Could not find card content element');
-          return;
-      }
-      
-      const cardContent = cardContentElement.textContent;
+      // Get the card content and look for links
+      const cardContent = card.textContent || '';
       this.debugLog(`Card content: "${cardContent.substring(0, 50)}${cardContent.length > 50 ? '...' : ''}"`);
       
-      // Look for wiki-links [[Link]] or [[Link|Display Text]]
-      const linkMatch = cardContent.match(/\[\[(.*?)(?:\|.*?)?\]\]/);
+      // Try to extract links from the card in multiple ways
+      let foundLink = false;
       
-      if (!linkMatch || !linkMatch[1]) {
-          this.debugLog(`No link found in card: ${cardContent}`);
-          new Notice('⚠️ No link found in Kanban card', 3000);
-          return;
+      // 1. First look for wiki-links [[Link]] or [[Link|Display Text]]
+      const wikiLinkMatch = cardContent.match(/\[\[(.*?)(?:\|.*?)?\]\]/);
+      if (wikiLinkMatch && wikiLinkMatch[1]) {
+          const linkPath = wikiLinkMatch[1].trim();
+          this.debugLog(`Found wiki-link to: "${linkPath}"`);
+          
+          // Show visual confirmation that we're updating
+          new Notice(`Updating ${this.settings.statusPropertyName} to "${newStatus}" for "${linkPath}"...`, 2000);
+          
+          this.updateLinkedNoteStatus(linkPath, newStatus);
+          foundLink = true;
+      } else {
+          // 2. Look for regular links or embedded links in the HTML
+          const linkElement = card.querySelector('a');
+          if (linkElement) {
+              const href = linkElement.getAttribute('href');
+              if (href && href.startsWith('obsidian://')) {
+                  // Extract the note path from obsidian:// URL
+                  const linkPath = decodeURIComponent(href.replace('obsidian://open?vault=', '').split('&file=')[1] || '');
+                  if (linkPath) {
+                      this.debugLog(`Found obsidian link to: "${linkPath}"`);
+                      
+                      // Show visual confirmation that we're updating
+                      new Notice(`Updating ${this.settings.statusPropertyName} to "${newStatus}" for "${linkPath}"...`, 2000);
+                      
+                      this.updateLinkedNoteStatus(linkPath, newStatus);
+                      foundLink = true;
+                  }
+              }
+          }
       }
       
-      const linkPath = linkMatch[1].trim();
-      this.debugLog(`Found link to: "${linkPath}"`);
-      
-      // Show visual confirmation that we're updating
-      new Notice(`Updating ${this.settings.statusPropertyName} to "${newStatus}" for "${linkPath}"...`, 2000);
-      
-      this.updateLinkedNoteStatus(linkPath, newStatus);
+      if (!foundLink) {
+          this.debugLog(`No link found in card: ${cardContent}`);
+          new Notice('⚠️ No link found in Kanban card', 3000);
+      }
   }
 
   async updateLinkedNoteStatus(linkPath: string, newStatus: string) {
