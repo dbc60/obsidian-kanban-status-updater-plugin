@@ -1,9 +1,13 @@
 # Kanban Status Updater
 
-This is a plugin for making [Kanban boards]((https://github.com/mgmeyers/obsidian-kanban)) better in [Obsidian](https://obsidian.md). When you move a card from one column to another it automatically updates a property in the note's frontmatter.
+This is a plugin for making [Kanban boards]((https://github.com/mgmeyers/obsidian-kanban)) more useful in [Obsidian](https://obsidian.md). When you move a card from one column to another, a property on the card's linked note is updated automatically to the column name. 
 
 
 ![demo](demo.gif)
+
+## Do I need it?
+
+With this plugin you can make other kinds of views that are not confined to your board, for eg. if you wanted to see open tasks across multiple boards you could write a `dataview` query for all notes with `status != 'Done'`
 
 Alternative I found to this ([MetaEdit plugin](https://github.com/chhoumann/MetaEdit)) was slow and buggy, I decided to use a different approach to make a lightweight plugin that is snappy and just works.
 
@@ -14,16 +18,6 @@ Alternative I found to this ([MetaEdit plugin](https://github.com/chhoumann/Meta
 - Customizable property name
 - Visual feedback when properties are updated
 - Debug mode for troubleshooting
-
-## Why do I need it?
-
-This lets you view your tasks/projects in other **non-kanban** ways, for eg. with a `dataview` query on all open tasks (across multiple Kanban boards). 
-
-Use-cases:
-- Project management: Move a task card to "In Progress" column and the linked note's status is updated automatically
-- Content workflow: Track the status of documents as they move through editorial stages
-- Study tracking: Update the status of study notes as they move through learning stages
-- Research organization: Track research notes through various phases
 
 ## Installation
 
