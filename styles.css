@@ -1,25 +1,13 @@
 /* styles.css for Kanban Status Updater */
 
-/* Status bar styling */
+/* Status bar styling - minimal to ensure good performance */
 .kanban-status-updater-statusbar {
   color: var(--text-accent);
-  font-weight: bold;
-  padding: 0 10px;
-  background-color: rgba(var(--accent-rgb), 0.1);
-  border-radius: 4px;
+  font-size: 0.8em;
+  padding: 0 8px;
+  opacity: 0.8;
 }
 
-/* Notification styling */
-.notice .kanban-status-update-notice {
-  font-weight: bold;
-}
-
-.kanban-status-old-value {
-  text-decoration: line-through;
-  opacity: 0.7;
-}
-
-.kanban-status-new-value {
-  font-weight: bold;
-  color: var(--text-accent);
+.kanban-status-updater-statusbar:hover {
+  opacity: 1;
 }
