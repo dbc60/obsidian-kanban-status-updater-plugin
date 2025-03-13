@@ -7,11 +7,9 @@ import {
   Plugin, 
   PluginSettingTab,
   Setting,
-  TFile, 
-  FrontMatterCache, 
+  TFile,
   parseYaml,
-  stringifyYaml,
-  WorkspaceLeaf
+  stringifyYaml
 } from 'obsidian';
 
 interface KanbanStatusUpdaterSettings {
@@ -28,586 +26,373 @@ const DEFAULT_SETTINGS: KanbanStatusUpdaterSettings = {
 
 export default class KanbanStatusUpdaterPlugin extends Plugin {
   settings: KanbanStatusUpdaterSettings;
-
-  // Process flags to avoid infinite loops
-  private processingMutation: boolean = false;
-  private pendingCardUpdates: Map<string, {card: HTMLElement, column: HTMLElement}> = new Map();
-  private mutationDebounceTimeout: NodeJS.Timeout = null;
-  debugLog: any;
-  statusBarItem: any;
-
+  statusBarItem: HTMLElement;
+  
+  // Track processing state to avoid redundant operations
+  private isProcessing = false;
+  
   async onload() {
+      console.log('Loading Kanban Status Updater plugin');
+      
+      // Load settings
       await this.loadSettings();
-
-      // Set up debug logging with rate limiting
-      let lastLogTime = Date.now();
-      let logCount = 0;
-      this.debugLog = (message: string) => {
-          if (this.settings.debugMode) {
-              // Rate limit logs to prevent console flooding
-              const now = Date.now();
-              if (now - lastLogTime > 5000) {
-                  // Reset counter after 5 seconds
-                  logCount = 0;
-                  lastLogTime = now;
-              }
-              
-              if (logCount < 50) { // Limit to 50 logs per 5 seconds
-                  console.log(`[Kanban Status Updater] ${message}`);
-                  logCount++;
-                  
-                  if (this.statusBarItem) {
-                      this.statusBarItem.setText(`[KSU] ${message.substring(0, 40)}${message.length > 40 ? '...' : ''}`);
-                      // Reset after 5 seconds
-                      setTimeout(() => {
-                          if (this.statusBarItem) {
-                              this.statusBarItem.setText('Kanban Status Updater Active');
-                          }
-                      }, 5000);
-                  }
-              } else if (logCount === 50) {
-                  console.log(`[Kanban Status Updater] Too many logs, throttling until ${new Date(lastLogTime + 5000).toLocaleTimeString()}`);
-                  logCount++;
-              }
-          }
-      };
+      
+      // Add status bar item
+      this.statusBarItem = this.addStatusBarItem();
+      this.statusBarItem.setText('Kanban Status Updater');
+      this.statusBarItem.addClass('kanban-status-updater-statusbar');
       
       // Display startup notification
-      new Notice('Kanban Status Updater plugin activated');
-      this.debugLog('Plugin loaded and activated');
-
-      // Hook into DOM events to detect Kanban card movements
-      this.registerDomEvent(document, 'dragend', this.handleDragEnd.bind(this));
-      this.debugLog('Registered drag event listener');
+      new Notice('Kanban Status Updater activated');
+      this.log('Plugin loaded');
       
-      // Register for mutation events to catch non-drag updates - with optimizations
-      const observer = new MutationObserver((mutations) => {
-          // Skip processing if we're already handling a mutation
-          if (this.processingMutation) return;
-          
-          // Debounce mutation processing to avoid too many updates
-          if (this.mutationDebounceTimeout) {
-              clearTimeout(this.mutationDebounceTimeout);
-          }
-          
-          this.mutationDebounceTimeout = setTimeout(() => {
-              this.handleDOMMutations(mutations);
-              this.mutationDebounceTimeout = null;
-          }, 500); // Wait 500ms before processing
-      });
+      // Register DOM event listener for drag events
+      this.registerDomEvent(document, 'dragend', this.onDragEnd.bind(this));
+      this.log('Registered drag event listener');
       
-      this.app.workspace.onLayoutReady(() => {
-          // Find Kanban board containers to observe more specifically
-          const kanbanBoards = document.querySelectorAll('.kanban-plugin__board, .kanban-board');
-          
-          if (kanbanBoards && kanbanBoards.length > 0) {
-              // Observe each Kanban board specifically rather than the entire document
-              kanbanBoards.forEach(board => {
-                  observer.observe(board, { 
-                      childList: true, 
-                      subtree: true,
-                      attributes: false  // Don't need attribute changes, just structure
-                  });
-              });
-              this.debugLog(`MutationObserver attached to ${kanbanBoards.length} Kanban boards`);
-          } else {
-              // Look for elements with kanban-plugin__ in their class names
-              const kanbanElements = document.querySelectorAll('[class*="kanban-plugin__"]');
-              if (kanbanElements && kanbanElements.length > 0) {
-                  kanbanElements.forEach(el => {
-                      observer.observe(el, {
-                          childList: true,
-                          subtree: true,
-                          attributes: false
-                      });
-                  });
-                  this.debugLog(`MutationObserver attached to ${kanbanElements.length} Kanban elements`);
-              } else {
-                  // Fallback to a more targeted observation if no boards found
-                  const workspace = document.querySelector('.workspace');
-                  if (workspace) {
-                      observer.observe(workspace, {
-                          childList: true,
-                          subtree: true,
-                          attributes: false
-                      });
-                      this.debugLog('MutationObserver attached to workspace (no Kanban boards found yet)');
-                  } else {
-                      // Last resort - observe body with more restrictions
-                      observer.observe(document.body, { 
-                          childList: true, 
-                          subtree: true,
-                          attributes: false
-                      });
-                      this.debugLog('MutationObserver attached to document body (fallback mode)');
-                  }
-              }
-          }
-          
-          // Set up a periodic check for new Kanban boards (in case they're added later)
-          setInterval(() => {
-              const currentBoards = document.querySelectorAll('.kanban-plugin__board');
-              if (currentBoards && currentBoards.length > 0) {
-                  currentBoards.forEach(board => {
-                      if (!board.hasAttribute('data-ksu-observed')) {
-                          observer.observe(board, { 
-                              childList: true, 
-                              subtree: true,
-                              attributes: false
-                          });
-                          board.setAttribute('data-ksu-observed', 'true');
-                          this.debugLog('Added observer to new Kanban board');
-                      }
-                  });
-              }
-          }, 10000); // Check every 10 seconds
-      });
-
+      // Set up mutation observer to catch card movements
+      this.setupMutationObserver();
+      
       // Add settings tab
       this.addSettingTab(new KanbanStatusUpdaterSettingTab(this.app, this));
-
-      // Add a status bar item to show the plugin is active
-      this.statusBarItem = this.addStatusBarItem();
-      this.statusBarItem.setText('Kanban Status Updater Active');
-      this.statusBarItem.addClass('plugin-kanban-status-updater');
-      
-      // Check if Kanban plugin is loaded - using safer approach
-      try {
-          // @ts-ignore - Check if kanban plugin exists using app.plugins (may not be in type definitions)
-          const kanbanLoaded = this.app.plugins && 
-                               // @ts-ignore
-                               ((this.app.plugins.plugins && this.app.plugins.plugins['obsidian-kanban']) || 
-                                // @ts-ignore
-                                (this.app.plugins.enabledPlugins && this.app.plugins.enabledPlugins.has('obsidian-kanban')));
-          
-          if (!kanbanLoaded) {
-              new Notice('⚠️ Warning: Kanban plugin might not be enabled. Kanban Status Updater requires it.', 10000);
-              this.debugLog('WARNING: Kanban plugin not detected!');
-          } else {
-              this.debugLog('Kanban plugin detected');
-          }
-      } catch (e) {
-          // If we can't detect it, just log and continue
-          this.debugLog(`Couldn't verify Kanban plugin: ${e.message}`);
-      }
   }
-
+  
   onunload() {
-      this.debugLog('Plugin unloaded');
-      new Notice('Kanban Status Updater plugin deactivated');
+      this.log('Plugin unloaded');
   }
-
+  
   async loadSettings() {
       this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
-
+  
   async saveSettings() {
       await this.saveData(this.settings);
   }
-
-  handleDragEnd(evt: DragEvent) {
-      // Check if this was a Kanban-related element being dragged
-      const target = evt.target as HTMLElement;
-      if (!target) {
-          this.debugLog('Drag event had no target');
-          return;
-      }
-      
-      this.debugLog(`Drag event detected on element: ${target.tagName} with class ${target.className}`);
-      
-      // Determine if this is a Kanban-related drag
-      const isKanbanElement = 
-          target.className.includes('kanban-plugin__') ||
-          target.className.includes('markdown-preview-view') ||
-          !!target.closest('[class*="kanban-plugin__"]');
+  
+  // Log helper with debug mode check
+  log(message: string) {
+      if (this.settings.debugMode) {
+          console.log(`[Kanban Status Updater] ${message}`);
           
-      if (!isKanbanElement) {
-          this.debugLog('Not a Kanban-related drag event');
-          return;
+          // Update status bar
+          this.statusBarItem.setText(`KSU: ${message.substring(0, 30)}${message.length > 30 ? '...' : ''}`);
+          
+          // Reset status bar after 3 seconds
+          setTimeout(() => {
+              this.statusBarItem.setText('Kanban Status Updater');
+          }, 3000);
       }
-      
-      this.debugLog('Kanban-related drag detected');
-      
-      // Get the item that was dragged (could be a task item or list item)
-      const draggedItem = target.closest('li') || target.closest('.task-list-item') || target;
-      if (!draggedItem) {
-          this.debugLog('Could not identify the dragged item');
-          return;
-      }
-      
-      // Find what column it was dropped into
-      const column = this.findKanbanColumn(draggedItem as HTMLElement);
-      if (!column) {
-          this.debugLog('Could not determine destination column');
-          return;
-      }
-      
-      this.debugLog('Found column for dragged item, processing movement');
-      
-      // Process the card movement
-      this.processCardMovement(draggedItem as HTMLElement, column as HTMLElement);
   }
-
-  handleDOMMutations(mutations: MutationRecord[]) {
-      if (this.processingMutation) {
-          this.debugLog('Already processing mutations, skipping');
-          return;
-      }
-      
-      // Process only a sample of mutations if there are too many
-      const mutationsToProcess = mutations.length > 10 ? 
-          mutations.slice(0, 10) : mutations;
+  
+  setupMutationObserver() {
+      // Create a mutation observer to monitor DOM changes
+      const observer = new MutationObserver((mutations) => {
+          if (this.isProcessing) return;
           
-      this.debugLog(`Processing ${mutationsToProcess.length} mutations (of ${mutations.length} total)`);
+          // Debounce to prevent repeated processing
+          setTimeout(() => {
+              this.handleMutations(mutations);
+          }, 500);
+      });
       
-      // Set flag to prevent recursive processing
-      this.processingMutation = true;
+      // Start observing once the layout is ready
+      this.app.workspace.onLayoutReady(() => {
+          // First try to observe specific Kanban elements
+          const kanbanBoards = document.querySelectorAll('.kanban-plugin__board');
+          
+          if (kanbanBoards.length > 0) {
+              this.log(`Found ${kanbanBoards.length} Kanban boards`);
+              
+              // Observe each board for changes
+              kanbanBoards.forEach(board => {
+                  observer.observe(board, {
+                      childList: true,
+                      subtree: true
+                  });
+              });
+          } else {
+              // Fall back to observing the entire workspace
+              const workspaceContainer = document.querySelector('.workspace-split');
+              if (workspaceContainer) {
+                  this.log('Observing workspace for Kanban boards');
+                  observer.observe(workspaceContainer, {
+                      childList: true,
+                      subtree: true
+                  });
+              } else {
+                  // Last resort - observe document body
+                  this.log('Falling back to observing document body');
+                  observer.observe(document.body, {
+                      childList: true,
+                      subtree: true
+                  });
+              }
+          }
+          
+          // Check for existing Kanban items
+          this.scanForKanbanItems();
+      });
+  }
+  
+  scanForKanbanItems() {
+      this.log('Scanning for existing Kanban items');
+      const items = document.querySelectorAll('.kanban-plugin__item');
+      this.log(`Found ${items.length} Kanban items`);
+  }
+  
+  handleMutations(mutations: MutationRecord[]) {
+      this.isProcessing = true;
+      this.log(`Processing ${mutations.length} mutations`);
       
       try {
-          // Clear the pending updates map
-          this.pendingCardUpdates.clear();
-          
-          // Check for relevant mutations (card being added to a column)
-          for (const mutation of mutationsToProcess) {
+          // Look for Kanban card movements
+          for (const mutation of mutations) {
               if (mutation.type === 'childList') {
-                  // Only log if there are actually Kanban-related nodes
-                  let foundKanbanElements = false;
-                  
+                  // Check for Kanban items being added (which happens when cards move)
                   for (const node of Array.from(mutation.addedNodes)) {
                       if (node instanceof HTMLElement) {
-                          // Log all element classes during debug to help identify patterns
-                          if (this.settings.debugMode && node.className) {
-                              this.debugLog(`Element classes: ${node.className}`);
-                          }
-                          
-                          // Check if this is or contains Kanban-related elements
-                          const isKanbanElement = 
-                              node.className.includes('kanban-plugin__') ||
-                              node.className.includes('markdown-preview-view') ||
-                              !!node.querySelector('[class*="kanban-plugin__"]') ||
-                              !!node.closest('[class*="kanban-plugin__"]');
-                              
-                          if (isKanbanElement) {
-                              foundKanbanElements = true;
-                              
-                              // Only now log details
-                              this.debugLog(`Relevant mutation: ${node.tagName} with class ${node.className}`);
-                              
-                              // Try to identify potential card elements in several ways
-                              // Kanban cards might be list items in the markdown
-                              const listItems = node.querySelectorAll('li');
-                              const taskListItems = node.querySelectorAll('.task-list-item');
-                              const dataItems = node.querySelectorAll('[data-line]');  // Items with data-line attribute
-                              
-                              const potentialCards = [
-                                  ...Array.from(listItems),
-                                  ...Array.from(taskListItems),
-                                  ...Array.from(dataItems)
-                              ];
-                              
-                              if (potentialCards.length > 0) {
-                                  this.debugLog(`Found ${potentialCards.length} potential card elements`);
-                                  
-                                  for (const card of potentialCards) {
-                                      // Try to find the column - might be a parent element with a heading
-                                      const column = this.findKanbanColumn(card as HTMLElement);
-                                      
-                                      if (column) {
-                                          // Create a unique ID for this card
-                                          const cardText = card.textContent?.trim();
-                                          const cardId = cardText?.substring(0, 50) || card.id || 'unknown';
-                                          
-                                          this.debugLog(`Found card: "${cardText?.substring(0, 30)}..." in column`);
-                                          
-                                          // Add to pending updates
-                                          this.pendingCardUpdates.set(cardId, {
-                                              card: card as HTMLElement, 
-                                              column: column
-                                          });
-                                      }
-                                  }
-                              } else {
-                                  this.debugLog('No potential cards found in Kanban element');
-                              }
-                          }
+                          // Check if this element is or contains a Kanban item
+                          this.processElement(node);
                       }
                   }
-                  
-                  // Only log for mutations with Kanban elements
-                  if (foundKanbanElements) {
-                      this.debugLog(`Processed mutation with ${mutation.addedNodes.length} nodes`);
-                  }
               }
           }
-          
-          // Process all pending updates
-          if (this.pendingCardUpdates.size > 0) {
-              this.debugLog(`Processing ${this.pendingCardUpdates.size} card updates`);
-              
-              // Process each card update (with a slight delay between them to avoid overloading)
-              let index = 0;
-              for (const [cardId, {card, column}] of this.pendingCardUpdates.entries()) {
-                  // Stagger processing to avoid too much at once
-                  setTimeout(() => {
-                      this.processCardMovement(card, column);
-                  }, index * 100); // 100ms between each card
-                  index++;
-              }
-          }
-      } catch (e) {
-          this.debugLog(`Error processing mutations: ${e.message}`);
+      } catch (error) {
+          this.log(`Error processing mutations: ${error.message}`);
       } finally {
-          // Clear the flag when done
+          // Reset processing flag after a delay
           setTimeout(() => {
-              this.processingMutation = false;
-              this.debugLog('Mutation processing complete');
-          }, 1000); // Ensure a minimum cool-down period between mutation processing
+              this.isProcessing = false;
+          }, 1000);
       }
   }
   
-  // New helper method to find the Kanban column for a card
-  findKanbanColumn(card: HTMLElement): HTMLElement | null {
-      // Try several strategies to find the column
+  onDragEnd(event: DragEvent) {
+      this.log('Drag end event detected');
       
-      // 1. Look for heading elements that might be column headers
-      let current = card;
-      while (current && current.tagName !== 'BODY') {
-          // Check if this element has a heading as a previous sibling or child
-          const heading = current.querySelector('h1, h2, h3, h4, h5, h6') || 
-                         this.findPreviousHeading(current);
-          
-          if (heading) {
-              this.debugLog(`Found column heading: "${heading.textContent}"`);
-              return current;
-          }
-          
-          current = current.parentElement;
-      }
-      
-      // 2. Try to find column based on structure - look for container divs
-      const containerDiv = card.closest('.markdown-preview-section');
-      if (containerDiv) {
-          return containerDiv as HTMLElement;
-      }
-      
-      // 3. If we really can't find anything, use the parent of the card
-      return card.parentElement;
-  }
-  
-  // Helper to find the previous heading element
-  findPreviousHeading(element: HTMLElement): HTMLElement | null {
-      let previous = element.previousElementSibling;
-      while (previous) {
-          if (previous.matches('h1, h2, h3, h4, h5, h6')) {
-              return previous as HTMLElement;
-          }
-          
-          // Also check children of previous siblings (nested headings)
-          const nestedHeading = previous.querySelector('h1, h2, h3, h4, h5, h6');
-          if (nestedHeading) {
-              return nestedHeading as HTMLElement;
-          }
-          
-          previous = previous.previousElementSibling;
-      }
-      return null;
-  }
-
-  processCardMovement(card: HTMLElement, column: HTMLElement) {
-      // Try to determine the column name (new status) from heading elements
-      let columnHeader = column.querySelector('h1, h2, h3, h4, h5, h6');
-      if (!columnHeader) {
-          // If no heading found in the column, try to find it above
-          columnHeader = this.findPreviousHeading(column);
-      }
-      
-      if (!columnHeader) {
-          this.debugLog('Could not find column header element');
+      if (this.isProcessing) {
+          this.log('Already processing, ignoring drag event');
           return;
       }
       
-      const newStatus = columnHeader.textContent.trim();
-      this.debugLog(`Column name (new status): "${newStatus}"`);
-      
-      // Get the card content and look for links
-      const cardContent = card.textContent || '';
-      this.debugLog(`Card content: "${cardContent.substring(0, 50)}${cardContent.length > 50 ? '...' : ''}"`);
-      
-      // Try to extract links from the card in multiple ways
-      let foundLink = false;
-      
-      // 1. First look for wiki-links [[Link]] or [[Link|Display Text]]
-      const wikiLinkMatch = cardContent.match(/\[\[(.*?)(?:\|.*?)?\]\]/);
-      if (wikiLinkMatch && wikiLinkMatch[1]) {
-          const linkPath = wikiLinkMatch[1].trim();
-          this.debugLog(`Found wiki-link to: "${linkPath}"`);
-          
-          // Show visual confirmation that we're updating
-          new Notice(`Updating ${this.settings.statusPropertyName} to "${newStatus}" for "${linkPath}"...`, 2000);
-          
-          this.updateLinkedNoteStatus(linkPath, newStatus);
-          foundLink = true;
-      } else {
-          // 2. Look for regular links or embedded links in the HTML
-          const linkElement = card.querySelector('a');
-          if (linkElement) {
-              const href = linkElement.getAttribute('href');
-              if (href && href.startsWith('obsidian://')) {
-                  // Extract the note path from obsidian:// URL
-                  const linkPath = decodeURIComponent(href.replace('obsidian://open?vault=', '').split('&file=')[1] || '');
-                  if (linkPath) {
-                      this.debugLog(`Found obsidian link to: "${linkPath}"`);
-                      
-                      // Show visual confirmation that we're updating
-                      new Notice(`Updating ${this.settings.statusPropertyName} to "${newStatus}" for "${linkPath}"...`, 2000);
-                      
-                      this.updateLinkedNoteStatus(linkPath, newStatus);
-                      foundLink = true;
-                  }
-              }
-          }
-      }
-      
-      if (!foundLink) {
-          this.debugLog(`No link found in card: ${cardContent}`);
-          new Notice('⚠️ No link found in Kanban card', 3000);
-      }
-  }
-
-  async updateLinkedNoteStatus(linkPath: string, newStatus: string) {
-      // Find the linked file
-      const file = this.app.metadataCache.getFirstLinkpathDest(linkPath, '');
-      
-      if (!file) {
-          this.debugLog(`Linked file not found: ${linkPath}`);
-          new Notice(`⚠️ Error: File "${linkPath}" not found`, 5000);
-          return;
-      }
-      
-      this.debugLog(`Found linked file: ${file.path}`);
+      this.isProcessing = true;
       
       try {
+          const target = event.target as HTMLElement;
+          if (!target) return;
+          
+          this.log(`Drag ended on element: ${target.tagName}${target.className ? ' with class ' + target.className : ''}`);
+          
+          // Process the dragged element
+          this.processElement(target);
+          
+      } catch (error) {
+          this.log(`Error processing drag event: ${error.message}`);
+      } finally {
+          // Reset processing flag after a delay
+          setTimeout(() => {
+              this.isProcessing = false;
+          }, 1000);
+      }
+  }
+  
+  processElement(element: HTMLElement) {
+      try {
+          // Try different strategies to find the Kanban item
+          
+          // 1. Check if the element itself is a Kanban item
+          if (element.classList.contains('kanban-plugin__item')) {
+              this.log('Element is a Kanban item');
+              this.processKanbanItem(element);
+              return;
+          }
+          
+          // 2. Check if the element is an item title
+          if (element.classList.contains('kanban-plugin__item-title')) {
+              this.log('Element is a Kanban item title');
+              const itemElement = element.closest('.kanban-plugin__item') as HTMLElement;
+              if (itemElement) {
+                  this.processKanbanItem(itemElement);
+                  return;
+              }
+          }
+          
+          // 3. Look for Kanban items inside this element
+          const items = element.querySelectorAll('.kanban-plugin__item');
+          if (items.length > 0) {
+              this.log(`Found ${items.length} Kanban items inside element`);
+              // Process the last item (most likely the one that was moved)
+              this.processKanbanItem(items[items.length - 1] as HTMLElement);
+              return;
+          }
+          
+          // 4. Check if element is inside a Kanban item
+          const parentItem = element.closest('.kanban-plugin__item') as HTMLElement;
+          if (parentItem) {
+              this.log('Element is inside a Kanban item');
+              this.processKanbanItem(parentItem);
+              return;
+          }
+          
+          this.log('No Kanban items found related to this element');
+          
+      } catch (error) {
+          this.log(`Error in processElement: ${error.message}`);
+      }
+  }
+  
+  processKanbanItem(itemElement: HTMLElement) {
+      try {
+          this.log(`Processing Kanban item: ${itemElement.textContent.substring(0, 30)}...`);
+          
+          // 1. Find the column (lane) this item is in
+          const lane = itemElement.closest('.kanban-plugin__lane');
+          if (!lane) {
+              this.log('Could not find lane/column for this item');
+              return;
+          }
+          
+          // 2. Get the column name from the lane header
+          const laneHeader = lane.querySelector('.kanban-plugin__lane-title');
+          if (!laneHeader) {
+              this.log('Could not find lane header');
+              return;
+          }
+
+          this.log(`laneHeader.textContent: ${laneHeader.textContent}`);
+          
+          const columnName = laneHeader.textContent.trim();
+          this.log(`Item is in column: "${columnName}"`);
+          
+          // 3. Find the link in the item
+          const titleElement = itemElement.querySelector('.kanban-plugin__item-title');
+          if (!titleElement) {
+              this.log('Could not find item title element');
+              return;
+          }
+          
+          // Look for an internal link in the markdown content
+          const internalLink = titleElement.querySelector('a.internal-link');
+          if (!internalLink) {
+              this.log('No internal link found in item');
+              return;
+          }
+          
+          // Get the link target (note path)
+          const linkPath = internalLink.getAttribute('data-href') || 
+                          internalLink.getAttribute('href');
+          
+          if (!linkPath) {
+              this.log('Link has no href or data-href attribute');
+              return;
+          }
+          
+          this.log(`Found link to note: "${linkPath}"`);
+          
+          // Update the linked note's status property
+          this.updateNoteStatus(linkPath, columnName);
+          
+      } catch (error) {
+          this.log(`Error in processKanbanItem: ${error.message}`);
+      }
+  }
+  
+  async updateNoteStatus(notePath: string, status: string) {
+      try {
+          // Find the linked file
+          const file = this.app.metadataCache.getFirstLinkpathDest(notePath, '');
+          
+          if (!file) {
+              this.log(`Could not find note: ${notePath}`);
+              new Notice(`⚠️ Error: Note "${notePath}" not found`, 3000);
+              return;
+          }
+          
+          this.log(`Found file: ${file.path}`);
+          
           // Read the file content
           const content = await this.app.vault.read(file);
-          this.debugLog(`File content loaded (${content.length} chars)`);
           
-          // Check if the file has frontmatter
+          // Check if file already has frontmatter
           const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
           const frontmatterMatch = content.match(frontmatterRegex);
           
           let newContent;
-          let oldStatus = 'none';
-          let action = 'created';
+          let oldStatus = null;
           
           if (frontmatterMatch) {
-              this.debugLog('File has frontmatter');
               // File has frontmatter
               const frontmatterText = frontmatterMatch[1];
               let frontmatterObj;
               
               try {
-                  // Try to parse the frontmatter
+                  // Parse the frontmatter
                   frontmatterObj = parseYaml(frontmatterText);
-                  this.debugLog('Frontmatter parsed successfully');
                   
-                  // Check if status property already exists
+                  // Check for existing status property
                   if (frontmatterObj[this.settings.statusPropertyName]) {
                       oldStatus = frontmatterObj[this.settings.statusPropertyName];
-                      action = 'updated';
                   }
                   
               } catch (e) {
-                  this.debugLog(`Error parsing frontmatter: ${e.message}`);
-                  new Notice(`⚠️ Warning: Invalid frontmatter in ${file.basename}, creating new frontmatter`, 5000);
+                  this.log(`Error parsing frontmatter: ${e.message}`);
                   frontmatterObj = {};
               }
               
               // Update the status property
-              frontmatterObj[this.settings.statusPropertyName] = newStatus;
+              frontmatterObj[this.settings.statusPropertyName] = status;
               
-              // Generate the new frontmatter text
+              // Generate new frontmatter text
               const newFrontmatterText = stringifyYaml(frontmatterObj);
-              this.debugLog('New frontmatter generated');
               
               // Replace the frontmatter in the content
               newContent = content.replace(frontmatterRegex, `---\n${newFrontmatterText}---`);
+              
           } else {
-              this.debugLog('File has no frontmatter, creating new frontmatter');
               // File has no frontmatter, create it
               const frontmatterObj = {
-                  [this.settings.statusPropertyName]: newStatus
+                  [this.settings.statusPropertyName]: status
               };
+              
               const frontmatterText = stringifyYaml(frontmatterObj);
               newContent = `---\n${frontmatterText}---\n\n${content}`;
           }
           
           // Save the modified content
           await this.app.vault.modify(file, newContent);
-          this.debugLog('File modified successfully');
           
-          // Show notification with more details
-          const banner = createFragment(el => {
-              el.createDiv({ 
-                  text: `✅ ${this.settings.statusPropertyName} ${action}:`,
-                  cls: 'status-updated-banner-title'
-              });
-              el.createDiv({
-                  cls: 'status-updated-banner-details'
-              }, div => {
-                  div.createSpan({ text: 'File: ' });
-                  div.createSpan({ 
-                      text: file.basename,
-                      cls: 'status-updated-filename'
-                  });
-                  div.createEl('br');
-                  if (action === 'updated') {
-                      div.createSpan({ text: 'Changed from: ' });
-                      div.createSpan({ 
-                          text: `"${oldStatus}"`,
-                          cls: 'status-updated-old-value'
-                      });
-                      div.createEl('br');
-                  }
-                  div.createSpan({ text: 'New value: ' });
-                  div.createSpan({ 
-                      text: `"${newStatus}"`,
-                      cls: 'status-updated-new-value'
-                  });
-              });
-          });
+          // Show notification
+          if (this.settings.showNotifications) {
+              if (oldStatus) {
+                  new Notice(`Updated ${this.settings.statusPropertyName}: "${oldStatus}" → "${status}" for ${file.basename}`, 3000);
+              } else {
+                  new Notice(`Set ${this.settings.statusPropertyName}: "${status}" for ${file.basename}`, 3000);
+              }
+          }
           
-          // Always show the detailed banner
-          new Notice(banner, 5000);
+          this.log(`Successfully updated status for ${file.basename}`);
           
-          // Update status bar
-          this.statusBarItem.setText(`Updated: ${file.basename} → ${newStatus}`);
-          setTimeout(() => {
-              this.statusBarItem.setText('Kanban Status Updater Active');
-          }, 5000);
-          
-          this.debugLog(`Success: ${this.settings.statusPropertyName} for ${file.basename} ${action} from "${oldStatus}" to "${newStatus}"`);
       } catch (error) {
-          this.debugLog(`Error updating note status: ${error.message}`);
-          new Notice(`⚠️ Error updating ${this.settings.statusPropertyName} for ${file.basename}: ${error.message}`, 10000);
+          this.log(`Error updating note status: ${error.message}`);
+          new Notice(`⚠️ Error updating status: ${error.message}`, 3000);
       }
   }
 }
 
-// Settings Tab
 class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
   plugin: KanbanStatusUpdaterPlugin;
-
+  
   constructor(app: App, plugin: KanbanStatusUpdaterPlugin) {
       super(app, plugin);
       this.plugin = plugin;
   }
-
+  
   display(): void {
       const {containerEl} = this;
-
+      
       containerEl.empty();
       containerEl.createEl('h2', {text: 'Kanban Status Updater Settings'});
-
+      
       new Setting(containerEl)
           .setName('Status Property Name')
           .setDesc('The name of the property to update when a card is moved')
@@ -618,7 +403,7 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
                   this.plugin.settings.statusPropertyName = value;
                   await this.plugin.saveSettings();
               }));
-
+      
       new Setting(containerEl)
           .setName('Show Notifications')
           .setDesc('Show a notification when a status is updated')
@@ -628,10 +413,10 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
                   this.plugin.settings.showNotifications = value;
                   await this.plugin.saveSettings();
               }));
-              
+      
       new Setting(containerEl)
           .setName('Debug Mode')
-          .setDesc('Enable detailed logging to console and status bar updates')
+          .setDesc('Enable detailed logging to console')
           .addToggle(toggle => toggle
               .setValue(this.plugin.settings.debugMode)
               .onChange(async (value) => {
@@ -639,67 +424,42 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
                   await this.plugin.saveSettings();
                   new Notice(`Debug mode ${value ? 'enabled' : 'disabled'}`);
               }));
-              
-      // Add a button to trigger a test update
+      
+      // Add a test button
       new Setting(containerEl)
           .setName('Test Plugin')
-          .setDesc('Run a test to verify plugin functionality')
+          .setDesc('Scan for Kanban items to verify plugin is working')
           .addButton(button => button
               .setButtonText('Run Test')
               .onClick(() => {
-                  new Notice('Test function running - check console for logs');
-                  this.plugin.debugLog('Test function triggered from settings');
+                  new Notice('Looking for Kanban items...');
+                  const items = document.querySelectorAll('.kanban-plugin__item');
+                  new Notice(`Found ${items.length} Kanban items`);
                   
-                  // Show an example of what a successful update would look like
-                  const banner = createFragment(el => {
-                      el.createDiv({ 
-                          text: `✅ ${this.plugin.settings.statusPropertyName} updated:`,
-                          cls: 'status-updated-banner-title'
-                      });
-                      el.createDiv({
-                          cls: 'status-updated-banner-details'
-                      }, div => {
-                          div.createSpan({ text: 'File: ' });
-                          div.createSpan({ 
-                              text: 'Example Note',
-                              cls: 'status-updated-filename'
-                          });
-                          div.createEl('br');
-                          div.createSpan({ text: 'Changed from: ' });
-                          div.createSpan({ 
-                              text: '"In Progress"',
-                              cls: 'status-updated-old-value'
-                          });
-                          div.createEl('br');
-                          div.createSpan({ text: 'New value: ' });
-                          div.createSpan({ 
-                              text: '"Completed"',
-                              cls: 'status-updated-new-value'
-                          });
-                      });
-                  });
-                  
-                  new Notice(banner, 5000);
+                  if (items.length > 0) {
+                      this.plugin.processKanbanItem(items[0] as HTMLElement);
+                  }
               }));
-              
+      
+      // Add troubleshooting section
       containerEl.createEl('h3', {text: 'Troubleshooting'});
       
       containerEl.createEl('p', {
-          text: 'If the plugin is not working, check the following:'
+          text: 'If the plugin is not working:'
       });
       
-      const troubleshootingList = containerEl.createEl('ul');
+      const list = containerEl.createEl('ul');
       
-      troubleshootingList.createEl('li', {
+      list.createEl('li', {
           text: 'Ensure the Kanban plugin is installed and enabled'
       });
       
-      troubleshootingList.createEl('li', {
-          text: 'Verify your Kanban cards contain wiki-links (e.g., [[Note Title]])'
+      list.createEl('li', {
+          text: 'Make sure your Kanban cards contain internal links to notes'
       });
       
-      troubleshootingList.createEl('li', {
-          text: 'Try enabling Debug Mode to see detailed logs in the developer console (Ctrl+Shift+I)'
+      list.createEl('li', {
+          text: 'Try enabling Debug Mode and check the developer console (Ctrl+Shift+I)'
       });
   }
 }

@@ -1,48 +1,25 @@
-/* styles.css */
-/* Status Bar */
-.status-bar-item.plugin-kanban-status-updater {
+/* styles.css for Kanban Status Updater */
+
+/* Status bar styling */
+.kanban-status-updater-statusbar {
   color: var(--text-accent);
   font-weight: bold;
+  padding: 0 10px;
   background-color: rgba(var(--accent-rgb), 0.1);
-  padding: 0 8px;
   border-radius: 4px;
 }
 
-/* Hide data attribute used for tracking observed boards */
-[data-ksu-observed] {
-  /* No visible style changes */
-}
-
-/* Notification Banners */
-.status-updated-banner-title {
-  font-weight: bold;
-  font-size: 16px;
-  margin-bottom: 4px;
-  color: var(--text-accent);
-}
-
-.status-updated-banner-details {
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-.status-updated-filename {
+/* Notification styling */
+.notice .kanban-status-update-notice {
   font-weight: bold;
 }
 
-.status-updated-old-value {
-  font-style: italic;
+.kanban-status-old-value {
   text-decoration: line-through;
-  opacity: 0.8;
+  opacity: 0.7;
 }
 
-.status-updated-new-value {
+.kanban-status-new-value {
   font-weight: bold;
   color: var(--text-accent);
-}
-
-/* Debug mode indicator */
-.plugin-kanban-status-updater.debug-mode:after {
-  content: " [DEBUG]";
-  color: var(--text-error-hover);
 }
