@@ -1,20 +1,25 @@
-# Kanban Status Updater for Obsidian
+# Kanban Status Updater
 
-This plugin automatically updates a property in a note's frontmatter when a card containing a link to that note is moved to a different column on a Kanban board.
+This is a plugin for making [Kanban boards]((https://github.com/mgmeyers/obsidian-kanban)) better in [Obsidian](https://obsidian.md). When you move a card from one column to another it automatically updates a property in the note's frontmatter.
+
 
 ![demo](demo.gif)
 
+Alternative I found to this ([MetaEdit plugin](https://github.com/chhoumann/MetaEdit)) was slow and buggy, I decided to use a different approach to make a lightweight plugin that is snappy and just works.
+
 ## Features
 
-- Automatically updates a YAML frontmatter property (default: "status") when a card is moved on a Kanban board
-- Works with the [Obsidian Kanban plugin](https://github.com/mgmeyers/obsidian-kanban)
+- Auto-updates a frontmatter property (default: "status") when a card is moved on a Kanban board
 - Performance optimized: only monitors the currently active Kanban board
 - Customizable property name
 - Visual feedback when properties are updated
 - Debug mode for troubleshooting
 
-## Use Cases
+## Why do I need it?
 
+This lets you view your tasks/projects in other **non-kanban** ways, for eg. with a `dataview` query on all open tasks (across multiple Kanban boards). 
+
+Use-cases:
 - Project management: Move a task card to "In Progress" column and the linked note's status is updated automatically
 - Content workflow: Track the status of documents as they move through editorial stages
 - Study tracking: Update the status of study notes as they move through learning stages
@@ -47,19 +52,6 @@ This plugin automatically updates a property in a note's frontmatter when a card
 3. When you move a card to a different column, the linked note's status property will automatically update to match the column name
 
 No additional configuration is required for basic functionality.
-
-### Example:
-
-1. You have a note called "Project X Research"
-2. You add a card with a link to `[[Project X Research]]` on your Kanban board
-3. When you move this card from the "To Do" column to the "In Progress" column
-4. The "Project X Research" note's frontmatter will be updated:
-
-```yaml
----
-status: In Progress
----
-```
 
 ## Configuration
 
@@ -96,18 +88,7 @@ If the plugin isn't working as expected:
 - Requires Obsidian v0.15.0 or higher
 - Requires Obsidian Kanban plugin v1.3.0 or higher
 
-## Credits
-
-- This plugin works with the [Obsidian Kanban plugin](https://github.com/mgmeyers/obsidian-kanban) by mgmeyers
-- Inspired by the need to integrate Kanban workflow states with note frontmatter
-
-## License
-
-MIT License, see [LICENSE](LICENSE) for details.
-
----
-
-If you find this plugin helpful, consider:
-- Star the [GitHub repository](https://github.com/yourusername/obsidian-kanban-status-updater)
-- Report any [issues](https://github.com/yourusername/obsidian-kanban-status-updater/issues)
-- Submit [pull requests](https://github.com/yourusername/obsidian-kanban-status-updater/pulls) for new features or bug fixes
+## If you find this plugin helpful,
+- ⭐️ Star the [GitHub repository](https://github.com/ankit-kapur/obsidian-kanban-status-updater-plugin)
+- ⚠️ Report any [issues](https://github.com/ankit-kapur/obsidian-kanban-status-updater-plugin/issues)
+- ⬆️ Submit [pull requests](https://github.com/ankit-kapur/obsidian-kanban-status-updater-plugin/pulls) for new features or bug fixes
