@@ -6,8 +6,19 @@ import {
   PluginSettingTab,
   Setting,
   stringifyYaml,
-  WorkspaceLeaf
+  WorkspaceLeaf,
+  View
 } from 'obsidian';
+
+// Extended interfaces for Obsidian internal properties
+interface ExtendedWorkspaceLeaf extends WorkspaceLeaf {
+  containerEl?: HTMLElement;
+  view: ExtendedView;
+}
+
+interface ExtendedView extends View {
+  contentEl?: HTMLElement;
+}
 
 interface KanbanStatusUpdaterSettings {
   statusPropertyName: string;
@@ -117,8 +128,8 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
     // First disconnect any existing observers
     this.disconnectObservers();
     
-    // Get the active leaf
-    const activeLeaf = this.app.workspace.activeLeaf;
+    // Get the active leaf using the non-deprecated API
+    const activeLeaf = this.app.workspace.getLeaf(false);
     if (!activeLeaf) return;
     
     try {
@@ -128,17 +139,16 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
         // Use type assertions to avoid TypeScript errors
         if (activeLeaf.view) {
             // Try to access the contentEl property using type assertion
-            // @ts-ignore - contentEl exists but might not be in type definitions
-            contentEl = activeLeaf.view.contentEl;
+            contentEl = (activeLeaf as ExtendedWorkspaceLeaf).view.contentEl || null;
         }
         
         // If that didn't work, try another approach
         if (!contentEl) {
             // Try to get the Kanban board directly from the DOM
             // Leaf containers have 'view-content' elements that contain the actual view
-            const viewContent = (activeLeaf as any).containerEl?.querySelector('.view-content');
+            const viewContent = (activeLeaf as ExtendedWorkspaceLeaf).containerEl?.querySelector('.view-content');
             if (viewContent) {
-                contentEl = viewContent;
+                contentEl = viewContent as HTMLElement;
             } else {
                 // Last resort - look for Kanban boards anywhere in the workspace
                 contentEl = document.querySelector('.workspace-leaf.mod-active .view-content');
