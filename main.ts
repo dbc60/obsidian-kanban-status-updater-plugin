@@ -465,10 +465,9 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
       const {containerEl} = this;
       
       containerEl.empty();
-      containerEl.createEl('h2', {text: 'Kanban Status Updater Settings'});
       
       new Setting(containerEl)
-          .setName('Status Property Name')
+          .setName('Status property name')
           .setDesc('The name of the property to update when a card is moved')
           .addText(text => text
               .setPlaceholder('status')
@@ -479,7 +478,7 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
               }));
       
       new Setting(containerEl)
-          .setName('Show Notifications')
+          .setName('Show notifications')
           .setDesc('Show a notification when a status is updated')
           .addToggle(toggle => toggle
               .setValue(this.plugin.settings.showNotifications)
@@ -489,7 +488,7 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
               }));
       
       new Setting(containerEl)
-          .setName('Debug Mode')
+          .setName('Debug mode')
           .setDesc('Enable detailed logging (reduces performance)')
           .addToggle(toggle => toggle
               .setValue(this.plugin.settings.debugMode)
@@ -506,36 +505,12 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
       
       // Add a test button
       new Setting(containerEl)
-          .setName('Test Plugin')
+          .setName('Test plugin')
           .setDesc('Test with current Kanban board')
           .addButton(button => button
               .setButtonText('Run Test')
               .onClick(() => {
                   this.plugin.runTest();
               }));
-      
-      // Performance info
-      containerEl.createEl('h3', {text: 'Performance Optimization'});
-      
-      containerEl.createEl('p', {
-          text: 'This plugin only monitors the currently active Kanban board to minimize performance impact.'
-      });
-      
-      // Troubleshooting section
-      containerEl.createEl('h3', {text: 'Troubleshooting'});
-      
-      const list = containerEl.createEl('ul');
-      
-      list.createEl('li', {
-          text: 'The plugin only works with the currently open Kanban board'
-      });
-      
-      list.createEl('li', {
-          text: 'Cards must contain internal links to notes'
-      });
-      
-      list.createEl('li', {
-          text: 'Keep Debug Mode disabled for best performance'
-      });
   }
 }

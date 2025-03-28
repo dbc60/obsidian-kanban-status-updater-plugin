@@ -51,11 +51,11 @@ No additional configuration is required for basic functionality.
 
 The plugin can be configured in the Settings tab:
 
-- **Status Property Name**: The name of the property to update in the note's frontmatter (default: "status")
-- **Show Notifications**: Toggle notifications when a status is updated
-- **Debug Mode**: Enable detailed logging to console (reduces performance, only use for troubleshooting)
+- **Status property name**: The name of the property to update in the note's frontmatter (default: "status")
+- **Show notifications**: Toggle notifications when a status is updated
+- **Debug mode**: Enable detailed logging to console (reduces performance, only use for troubleshooting)
 
-There's also a "Test Plugin" button that will scan for Kanban items on the active board to verify the plugin is working.
+There's also a "Test plugin" button that will scan for Kanban items on the active board to verify the plugin is working.
 
 ## Performance Considerations
 
@@ -79,7 +79,7 @@ If the plugin isn't working as expected:
 
 ## Compatibility
 
-- Requires Obsidian v0.15.0 or higher
+- Requires Obsidian v1.1.0 or higher
 - Requires Obsidian Kanban plugin v1.3.0 or higher
 
 ## If you find this plugin helpful,
