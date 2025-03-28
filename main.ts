@@ -34,7 +34,6 @@ const DEFAULT_SETTINGS: KanbanStatusUpdaterSettings = {
 
 export default class KanbanStatusUpdaterPlugin extends Plugin {
   settings: KanbanStatusUpdaterSettings;
-  statusBarItem: HTMLElement;
   
   // Track active observers to disconnect them when not needed
   private currentObserver: MutationObserver | null = null;
@@ -46,11 +45,6 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
       
       // Load settings
       await this.loadSettings();
-      
-      // Add status bar item
-      this.statusBarItem = this.addStatusBarItem();
-      this.statusBarItem.setText('KSU: Idle');
-      this.statusBarItem.addClass('kanban-status-updater-statusbar');
       
       // Display startup notification
       if (this.settings.showNotifications) {
@@ -94,18 +88,6 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
   log(message: string) {
       if (this.settings.debugMode) {
           console.log(`[KSU] ${message}`);
-          
-          // Update status bar
-          this.statusBarItem.setText(`KSU: ${message.substring(0, 25)}${message.length > 25 ? '...' : ''}`);
-          
-          // Reset status bar after 3 seconds if no other logs happen
-          setTimeout(() => {
-              if (this.activeKanbanBoard) {
-                  this.statusBarItem.setText('KSU: Active');
-              } else {
-                  this.statusBarItem.setText('KSU: Idle');
-              }
-          }, 3000);
       }
   }
   
@@ -164,7 +146,6 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
         const kanbanBoard = contentEl.querySelector('.kanban-plugin__board');
         if (kanbanBoard) {
             this.log('Found active Kanban board, setting up observer');
-            this.statusBarItem.setText('KSU: Active');
             
             // Store reference to active board
             this.activeKanbanBoard = kanbanBoard as HTMLElement;
@@ -173,11 +154,9 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
             this.setupObserverForBoard(kanbanBoard as HTMLElement);
         } else {
             this.log('Active leaf is not a Kanban board');
-            this.statusBarItem.setText('KSU: Idle');
         }
     } catch (error) {
         this.log(`Error detecting Kanban board: ${error.message}`);
-        this.statusBarItem.setText('KSU: Error');
     }
   }
   
@@ -405,80 +384,34 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
               return;
           }
           
-          // Read the file content
-          const content = await this.app.vault.read(file);
-          
-          // Check for existing frontmatter
-          const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
-          const frontmatterMatch = content.match(frontmatterRegex);
-          
-          let newContent;
+          // Get current status if it exists
+          const metadata = this.app.metadataCache.getFileCache(file);
           let oldStatus = null;
           
-          if (frontmatterMatch) {
-              // File has frontmatter
-              const frontmatterText = frontmatterMatch[1];
-              let frontmatterObj;
-              
-              try {
-                  // Try to parse the frontmatter
-                  frontmatterObj = parseYaml(frontmatterText);
-                  
-                  // Check if status property already exists
-                  if (frontmatterObj[this.settings.statusPropertyName]) {
-                      oldStatus = frontmatterObj[this.settings.statusPropertyName];
-                  }
-                  
-              } catch (e) {
-                  this.log(`Error parsing frontmatter: ${e.message}`);
-                  frontmatterObj = {};
-              }
-              
-              // Only update if status has changed
-              if (frontmatterObj[this.settings.statusPropertyName] !== status) {
-                  // Update the status property
-                  frontmatterObj[this.settings.statusPropertyName] = status;
-                  
-                  // Generate new frontmatter text
-                  const newFrontmatterText = stringifyYaml(frontmatterObj);
-                  
-                  // Replace the frontmatter in the content
-                  newContent = content.replace(frontmatterRegex, `---\n${newFrontmatterText}---`);
-                  
-                  // Save the modified content
-                  await this.app.vault.modify(file, newContent);
-                  
-                  // Show notification if enabled
-                  if (this.settings.showNotifications) {
-                      if (oldStatus) {
-                          new Notice(`Updated ${this.settings.statusPropertyName}: "${oldStatus}" → "${status}" for ${file.basename}`, 3000);
-                      } else {
-                          new Notice(`Set ${this.settings.statusPropertyName}: "${status}" for ${file.basename}`, 3000);
-                      }
-                  }
-                  
-                  this.log(`Updated status for ${file.basename} to "${status}"`);
-              } else {
-                  this.log(`Status already set to "${status}" for ${file.basename}, skipping update`);
-              }
-          } else {
-              // File has no frontmatter, create it
-              const frontmatterObj = {
-                  [this.settings.statusPropertyName]: status
-              };
-              
-              const frontmatterText = stringifyYaml(frontmatterObj);
-              newContent = `---\n${frontmatterText}---\n\n${content}`;
-              
-              // Save the modified content
-              await this.app.vault.modify(file, newContent);
+          if (metadata?.frontmatter && metadata.frontmatter[this.settings.statusPropertyName]) {
+              oldStatus = metadata.frontmatter[this.settings.statusPropertyName];
+          }
+          
+          // Only update if status has changed
+          if (oldStatus !== status) {
+              // Use the processFrontMatter API to update the frontmatter
+              await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+                  // Set the status property
+                  frontmatter[this.settings.statusPropertyName] = status;
+              });
               
               // Show notification if enabled
               if (this.settings.showNotifications) {
-                  new Notice(`Added ${this.settings.statusPropertyName}: "${status}" to ${file.basename}`, 3000);
+                  if (oldStatus) {
+                      new Notice(`Updated ${this.settings.statusPropertyName}: "${oldStatus}" → "${status}" for ${file.basename}`, 3000);
+                  } else {
+                      new Notice(`Set ${this.settings.statusPropertyName}: "${status}" for ${file.basename}`, 3000);
+                  }
               }
               
-              this.log(`Added frontmatter with status to ${file.basename}`);
+              this.log(`Updated status for ${file.basename} to "${status}"`);
+          } else {
+              this.log(`Status already set to "${status}" for ${file.basename}, skipping update`);
           }
       } catch (error) {
           this.log(`Error updating note status: ${error.message}`);
