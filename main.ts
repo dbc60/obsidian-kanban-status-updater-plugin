@@ -37,9 +37,9 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
   // Track active observers to disconnect them when not needed
   private currentObserver: MutationObserver | null = null;
   private isProcessingMutation = false;
-  private isProcessingDrag = false;
+  private isManuallyProcessing = false;
   private activeKanbanBoard: HTMLElement | null = null;
-  private draggedElement: HTMLElement | null = null;
+  
 
   async onload() {
       console.log('Loading Kanban Status Updater plugin');
@@ -53,15 +53,13 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
       }
       this.log('Plugin loaded');
 
-      // Add drag event listeners with proper scoping to avoid tab navigation interference
-      this.registerDomEvent(document, 'dragstart', this.onDragStart.bind(this));
-      this.registerDomEvent(document, 'dragend', this.onDragEnd.bind(this));
-      this.registerDomEvent(document, 'drop', this.onDrop.bind(this));
+      // Add click handler to automatically process cards after any interaction
+      this.registerDomEvent(document, 'click', this.onDocumentClick.bind(this));
       console.log('[KSU] Plugin initialized WITH scoped drag listeners for Kanban boards only');
       this.log('Plugin initialized with scoped drag listeners');
 
 
-      // Always monitor visible Kanban boards with both drag events and mutation observer  
+      // Always monitor visible Kanban boards with both drag events and mutation observer
       // Drag events handle real-time drag operations, MutationObserver handles menu-driven changes
       this.app.workspace.onLayoutReady(() => {
           setTimeout(() => {
@@ -118,15 +116,21 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
       this.log('Click-driven Kanban monitoring active (no automatic checks)');
   }
 
-  // Handle document clicks - ensure observers are active when interacting with Kanban
+  // Handle document clicks - automatically process cards after Kanban interactions
   onDocumentClick(event: MouseEvent) {
       try {
           const target = event.target as HTMLElement;
           if (this.isKanbanInteraction(target)) {
-              this.log('Detected Kanban interaction via click - ensuring observers are active');
-              // Ensure we have active observers for menu-driven changes
+              this.log('Detected Kanban interaction via click - will process cards automatically');
+              
+              // Ensure we have active board reference
               setTimeout(() => {
                   this.checkForActiveKanbanBoard();
+                  
+                  // Then automatically process all cards (like Run Test does)
+                  setTimeout(() => {
+                      this.autoProcessAllCards();
+                  }, 500); // Give time for any drag operations to complete
               }, 100);
           }
       } catch (error) {
@@ -202,7 +206,7 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
         // Check if this is a Kanban board
         const kanbanBoard = contentEl.querySelector('.kanban-plugin__board');
         if (kanbanBoard) {
-            this.log('Found active Kanban board, setting up observer');
+            this.log('Found active Kanban board, setting up observer and scanning');
 
             // Store reference to active board
             this.activeKanbanBoard = kanbanBoard as HTMLElement;
@@ -220,47 +224,63 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
   setupObserverForBoard(boardElement: HTMLElement) {
       // Create observer focused on detecting menu-driven card movements
       this.currentObserver = new MutationObserver((mutations) => {
-          if (this.isProcessingMutation || this.isProcessingDrag) return;
+          if (this.isProcessingMutation || this.isManuallyProcessing) return;
 
           // Look for any mutations that could indicate card movements
           const relevantMutations = mutations.filter(mutation => {
-              if (mutation.type !== 'childList') return false;
-
-              // Check for added or removed nodes that might be Kanban items
-              const hasKanbanChanges =
-                  Array.from(mutation.addedNodes).some(node =>
-                      node instanceof HTMLElement && (
-                          node.classList?.contains('kanban-plugin__item') ||
-                          node.querySelector?.('.kanban-plugin__item')
-                      )
-                  ) ||
-                  Array.from(mutation.removedNodes).some(node =>
-                      node instanceof HTMLElement && (
-                          node.classList?.contains('kanban-plugin__item') ||
-                          node.querySelector?.('.kanban-plugin__item')
-                      )
-                  );
-
-              return hasKanbanChanges;
+              // Check childList changes (cards being moved)
+              if (mutation.type === 'childList') {
+                  const hasKanbanChanges =
+                      Array.from(mutation.addedNodes).some(node =>
+                          node instanceof HTMLElement && (
+                              node.classList?.contains('kanban-plugin__item') ||
+                              node.querySelector?.('.kanban-plugin__item')
+                          )
+                      ) ||
+                      Array.from(mutation.removedNodes).some(node =>
+                          node instanceof HTMLElement && (
+                              node.classList?.contains('kanban-plugin__item') ||
+                              node.querySelector?.('.kanban-plugin__item')
+                          )
+                      );
+                  return hasKanbanChanges;
+              }
+              
+              // Check attribute changes that might indicate drag operations
+              if (mutation.type === 'attributes') {
+                  const target = mutation.target as HTMLElement;
+                  return target.classList?.contains('kanban-plugin__item') ||
+                         target.closest('.kanban-plugin__item') !== null;
+              }
+              
+              // Check character data changes
+              if (mutation.type === 'characterData') {
+                  const target = mutation.target.parentElement;
+                  return target?.closest('.kanban-plugin__item') !== null;
+              }
+              
+              return false;
           });
 
           if (relevantMutations.length === 0) return;
 
-          this.log(`Detected ${relevantMutations.length} relevant mutations (menu-driven changes)`);
+          this.log(`Detected ${relevantMutations.length} relevant mutations (menu/drag changes)`);
 
-          // Process with moderate delay for menu-driven changes
+          // Process with very short delay to catch drag operations
           this.isProcessingMutation = true;
           setTimeout(() => {
               this.handleMutations(relevantMutations);
               this.isProcessingMutation = false;
-          }, 500); // Moderate delay for menu actions
+          }, 50); // Very short delay to catch drag operations immediately
       });
 
-      // Watch for both direct and nested changes to catch menu movements
+      // Watch for all possible changes to catch both menu and drag movements
       this.currentObserver.observe(boardElement, {
           childList: true,
           subtree: true, // Need subtree to catch lane changes
-          attributes: false
+          attributes: true, // Also watch attribute changes that might occur during drag
+          attributeFilter: ['class', 'data-href', 'href'], // Watch for relevant attributes
+          characterData: true // Watch for text changes
       });
 
       this.log('Menu-focused observer set up for active Kanban board');
@@ -344,84 +364,7 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
     }
   }
 
-  onDragStart(event: DragEvent) {
-      try {
-          const target = event.target as HTMLElement;
-          if (!target || !this.activeKanbanBoard) return;
 
-          // Check if this is a Kanban item being dragged
-          const kanbanItem = target.closest('.kanban-plugin__item');
-          if (kanbanItem) {
-              const kanbanBoard = kanbanItem.closest('.kanban-plugin__board');
-              if (kanbanBoard && kanbanBoard.isSameNode(this.activeKanbanBoard)) {
-                  this.draggedElement = kanbanItem as HTMLElement;
-                  const linkElement = kanbanItem.querySelector('a.internal-link');
-                  const linkText = linkElement?.textContent || 'No link';
-                  this.log(`Drag started: ${linkText}`);
-              }
-          }
-      } catch (error) {
-          this.log(`Error in onDragStart: ${error.message}`);
-      }
-  }
-
-  onDragEnd(event: DragEvent) {
-      try {
-          if (!this.draggedElement || !this.activeKanbanBoard || this.isProcessingDrag) {
-              return;
-          }
-
-          const linkElement = this.draggedElement.querySelector('a.internal-link');
-          const linkText = linkElement?.textContent || 'No link';
-          this.log(`Drag ended: ${linkText}`);
-
-          this.isProcessingDrag = true;
-
-          // Process with a delay to allow DOM to settle after drag
-          setTimeout(() => {
-              if (this.draggedElement) {
-                  this.processKanbanItem(this.draggedElement);
-              }
-              this.draggedElement = null;
-              this.isProcessingDrag = false;
-          }, 300);
-
-      } catch (error) {
-          this.log(`Error in onDragEnd: ${error.message}`);
-          this.draggedElement = null;
-          this.isProcessingDrag = false;
-      }
-  }
-
-  onDrop(event: DragEvent) {
-      try {
-          const target = event.target as HTMLElement;
-          if (!target) return;
-
-          // Check if drop happened in a Kanban lane
-          const lane = target.closest('.kanban-plugin__lane');
-          if (!lane || !this.draggedElement || !this.activeKanbanBoard || this.isProcessingDrag) {
-              return;
-          }
-
-          const linkElement = this.draggedElement.querySelector('a.internal-link');
-          const linkText = linkElement?.textContent || 'No link';
-          this.log(`Card dropped: ${linkText}`);
-          
-          this.isProcessingDrag = true;
-          
-          // Process with extra delay to ensure DOM is fully updated after drop
-          setTimeout(() => {
-              if (this.draggedElement) {
-                  this.processKanbanItem(this.draggedElement);
-              }
-              this.draggedElement = null;
-              this.isProcessingDrag = false;
-          }, 500);
-      } catch (error) {
-          this.log(`Error in onDrop: ${error.message}`);
-      }
-  }
 
   processElement(element: HTMLElement) {
       try {
@@ -566,23 +509,107 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
           return;
       }
 
-      // Find items in the active board
+      // Dump current state of all cards
+      this.dumpBoardState();
+
+      // Block mutation observer while manually processing
+      this.isManuallyProcessing = true;
+
+      // Process all cards
       const items = this.activeKanbanBoard.querySelectorAll('.kanban-plugin__item');
       const count = items.length;
 
-      new Notice(`Found ${count} cards in active Kanban board`, 3000);
+      new Notice(`Found ${count} cards in active Kanban board - processing all`, 3000);
 
-      if (count > 0) {
-          // Process the first item with a link
-          for (let i = 0; i < count; i++) {
-              const item = items[i] as HTMLElement;
-              if (item.querySelector('a.internal-link')) {
-                  new Notice(`Testing with card: "${item.textContent.substring(0, 20)}..."`, 3000);
-                  this.processKanbanItem(item);
-                  break;
-              }
-          }
+      for (const item of Array.from(items)) {
+          this.processKanbanItem(item as HTMLElement);
       }
+
+      // Re-enable mutation observer after a delay
+      setTimeout(() => {
+          this.isManuallyProcessing = false;
+          this.log('Manual processing complete, mutation observer re-enabled');
+      }, 1000);
+  }
+
+  // Automatically process all cards (like Run Test but without UI feedback)
+  autoProcessAllCards() {
+      if (!this.activeKanbanBoard) return;
+
+      this.log('Auto-processing all cards after Kanban interaction');
+
+      // Block mutation observer while auto-processing
+      this.isManuallyProcessing = true;
+
+      // Process all cards
+      const items = this.activeKanbanBoard.querySelectorAll('.kanban-plugin__item');
+      
+      for (const item of Array.from(items)) {
+          this.processKanbanItem(item as HTMLElement);
+      }
+
+      // Re-enable mutation observer after a delay
+      setTimeout(() => {
+          this.isManuallyProcessing = false;
+          this.log('Auto-processing complete, mutation observer re-enabled');
+      }, 1000);
+  }
+
+  // Diagnostic method to see current board state
+  dumpBoardState() {
+      if (!this.activeKanbanBoard) return;
+
+      console.log('=== CURRENT BOARD STATE ===');
+      const items = this.activeKanbanBoard.querySelectorAll('.kanban-plugin__item');
+      
+      for (const item of Array.from(items)) {
+          const link = item.querySelector('a.internal-link');
+          const lane = item.closest('.kanban-plugin__lane');
+          const laneHeader = lane?.querySelector('.kanban-plugin__lane-header-wrapper .kanban-plugin__lane-title');
+          
+          const linkPath = link?.getAttribute('data-href') || link?.getAttribute('href') || 'NO_LINK';
+          const linkText = link?.textContent || 'NO_TEXT';
+          const columnName = laneHeader?.textContent?.trim() || 'NO_COLUMN';
+          
+          console.log(`Card: "${linkText}" (${linkPath}) -> Column: "${columnName}"`);
+      }
+      console.log('=== END BOARD STATE ===');
+  }
+
+  // Simple sync method for users to manually trigger after drag operations
+  syncAllCards() {
+      this.log('Manual sync requested');
+
+      // Make sure we have an active board
+      this.checkForActiveKanbanBoard();
+
+      if (!this.activeKanbanBoard) {
+          new Notice('⚠️ No active Kanban board found - open a Kanban board first', 5000);
+          return;
+      }
+
+      // Block mutation observer while syncing
+      this.isManuallyProcessing = true;
+
+      // Process all cards
+      const items = this.activeKanbanBoard.querySelectorAll('.kanban-plugin__item');
+      let processed = 0;
+      let updated = 0;
+
+      for (const item of Array.from(items)) {
+          const result = this.processKanbanItem(item as HTMLElement);
+          processed++;
+          // We can't easily track if processKanbanItem actually updated something
+          // So we'll just count processed cards
+      }
+
+      // Re-enable mutation observer
+      setTimeout(() => {
+          this.isManuallyProcessing = false;
+          this.log('Manual sync complete');
+      }, 1000);
+
+      new Notice(`Synced ${processed} cards with their current columns`, 3000);
   }
 }
 
@@ -644,6 +671,16 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
               .setButtonText('Run Test')
               .onClick(() => {
                   this.plugin.runTest();
+              }));
+
+      // Add a sync button for manual updates
+      new Setting(containerEl)
+          .setName('Sync card status')
+          .setDesc('Manually sync all card statuses with their current columns (use after drag-and-drop)')
+          .addButton(button => button
+              .setButtonText('Sync Now')
+              .onClick(() => {
+                  this.plugin.syncAllCards();
               }));
   }
 }
