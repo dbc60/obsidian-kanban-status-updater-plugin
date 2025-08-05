@@ -64,6 +64,8 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
       this.app.workspace.onLayoutReady(() => {
           setTimeout(() => {
               this.setupAlwaysOnKanbanMonitoring();
+              // Also immediately check for active Kanban board
+              this.checkForActiveKanbanBoard();
           }, 1000);
       });
 
@@ -142,26 +144,11 @@ export default class KanbanStatusUpdaterPlugin extends Plugin {
   isKanbanInteraction(element: HTMLElement): boolean {
       if (!element) return false;
 
-      // Check if element is within a Kanban board
+      // Simplified: just check if click is anywhere within a Kanban board
       const kanbanBoard = element.closest('.kanban-plugin__board');
       if (kanbanBoard) {
-          this.log('Element is within Kanban board');
+          this.log('Click detected within Kanban board - will auto-sync');
           return true;
-      }
-
-      // Check if element is a Kanban-related class
-      const kanbanClasses = [
-          'kanban-plugin__item',
-          'kanban-plugin__lane',
-          'kanban-plugin__lane-header',
-          'kanban-plugin__item-title'
-      ];
-
-      for (const className of kanbanClasses) {
-          if (element.classList?.contains(className) || element.closest(`.${className}`)) {
-              this.log(`Element matches Kanban class: ${className}`);
-              return true;
-          }
       }
 
       return false;
@@ -673,14 +660,5 @@ class KanbanStatusUpdaterSettingTab extends PluginSettingTab {
                   this.plugin.runTest();
               }));
 
-      // Add a sync button for manual updates
-      new Setting(containerEl)
-          .setName('Sync card status')
-          .setDesc('Manually sync all card statuses with their current columns (use after drag-and-drop)')
-          .addButton(button => button
-              .setButtonText('Sync Now')
-              .onClick(() => {
-                  this.plugin.syncAllCards();
-              }));
   }
 }
