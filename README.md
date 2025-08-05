@@ -34,6 +34,33 @@ Alternative I found to this ([MetaEdit plugin](https://github.com/chhoumann/Meta
 2. Extract the zip file into your Obsidian vault's `.obsidian/plugins/` folder
 3. Restart Obsidian and enable the plugin in Settings > Community Plugins
 
+## Development
+
+### Building from Source
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/ankit-kapur/obsidian-kanban-status-updater-plugin.git
+   cd obsidian-kanban-status-updater-plugin
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Build the plugin:
+   ```bash
+   npm run build
+   ```
+
+4. For development with auto-rebuild:
+   ```bash
+   npm run dev
+   ```
+
+The built files (`main.js`, `manifest.json`, `styles.css`) will be output to the project root and can be copied to your Obsidian vault's `.obsidian/plugins/kanban-status-updater/` folder for testing.
+
 ## Requirements
 
 - [Obsidian Kanban plugin](https://github.com/mgmeyers/obsidian-kanban) must be installed and enabled
