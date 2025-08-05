@@ -1,6 +1,6 @@
 # Kanban Status Updater
 
-This is a plugin for making [Kanban boards]((https://github.com/mgmeyers/obsidian-kanban)) more useful in [Obsidian](https://obsidian.md). When you move a card from one column to another, a property on the card's linked note is updated automatically to the column name. 
+This is a plugin for making [Kanban boards]((https://github.com/mgmeyers/obsidian-kanban)) more useful in [Obsidian](https://obsidian.md). When you move a card from one column to another, a property on the card's linked note is updated automatically to the column name.
 
 
 ![demo](demo.gif)
@@ -40,7 +40,7 @@ Alternative I found to this ([MetaEdit plugin](https://github.com/chhoumann/Meta
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/ankit-kapur/obsidian-kanban-status-updater-plugin.git
+   git clone https://github.com/dbc60/obsidian-kanban-status-updater-plugin.git
    cd obsidian-kanban-status-updater-plugin
    ```
 
